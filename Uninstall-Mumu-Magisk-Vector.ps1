@@ -50,7 +50,8 @@ for root in /data/adb/modules /data/adb/modules_update; do
 done
 rm -f /system/etc/init/magisk.rc
 rm -f /data/adb/magisk_init.sh
-if grep -q 'MUMU_MAGISK_COMPAT_LAUNCHER_v1.0.1' /system/bin/magisk 2>/dev/null; then
+# 前缀匹配识别任意版本安装的兼容启动器，保证旧版安装也能被新版卸载器干净移除
+if grep -q 'MUMU_MAGISK_COMPAT_LAUNCHER_v' /system/bin/magisk 2>/dev/null; then
     rm -f /system/bin/magisk
     if [ -e /data/adb/mumu-magisk-backup/system-bin-magisk ]; then
         cp -af /data/adb/mumu-magisk-backup/system-bin-magisk /system/bin/magisk

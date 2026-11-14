@@ -24,7 +24,7 @@ $LogRoot = Join-Path $ScriptRoot "logs"
 $BackupRoot = Join-Path $ScriptRoot "backups"
 $ConfigRoot = Join-Path $ScriptRoot "config"
 $DeviceConfigPath = Join-Path $ConfigRoot "last-device.txt"
-$ToolVersion = "1.0.1"
+$ToolVersion = "1.0.2"
 $Device = ""
 $Stamp = Get-Date -Format "yyyyMMdd-HHmmss"
 $HostLog = Join-Path $LogRoot "install-$Stamp.log"
@@ -401,7 +401,7 @@ function Get-GitHubReleaseAsset {
         [Parameter(Mandatory = $true)][string]$OutputName
     )
     $headers = @{
-        "User-Agent" = "Mumu-Magisk-LSPosed-OneClick/1.0.1"
+        "User-Agent" = "Mumu-Magisk-LSPosed-OneClick/$ToolVersion"
         "Accept" = "application/vnd.github+json"
         "X-GitHub-Api-Version" = "2022-11-28"
     }
@@ -885,7 +885,7 @@ on property:sys.boot_completed=1
 
 $magiskCompatText = @'
 #!/system/bin/sh
-# MUMU_MAGISK_COMPAT_LAUNCHER_v1.0.1
+# MUMU_MAGISK_COMPAT_LAUNCHER_v1.0.2
 # Keep Magisk discoverable in Android's standard PATH so official NeoZygisk can use
 # Magisk as its sole userspace root implementation. KernelSU userspace is separately
 # quarantined by magisk_init.sh; this launcher also makes recent KernelSU skip modules.
@@ -1036,7 +1036,8 @@ mkdir -p "$BACKUP" "$PERSIST_BACKUP"
 [ -f /system/etc/init/magisk.rc ] && cp -af /system/etc/init/magisk.rc "$BACKUP/magisk.rc.old"
 [ -f /data/adb/magisk_init.sh ] && cp -af /data/adb/magisk_init.sh "$BACKUP/magisk_init.sh.old"
 [ -f /data/adb/magisk.db ] && cp -af /data/adb/magisk.db "$BACKUP/magisk.db.old"
-if [ -e /system/bin/magisk ] && ! grep -q 'MUMU_MAGISK_COMPAT_LAUNCHER_v1.0.1' /system/bin/magisk 2>/dev/null; then
+# 前缀匹配识别任意版本安装的兼容启动器，避免新版重跑时把旧启动器覆盖进原始备份槽
+if [ -e /system/bin/magisk ] && ! grep -q 'MUMU_MAGISK_COMPAT_LAUNCHER_v' /system/bin/magisk 2>/dev/null; then
     rm -rf "$PERSIST_BACKUP/system-bin-magisk"
     cp -af /system/bin/magisk "$PERSIST_BACKUP/system-bin-magisk" || fail "backup existing /system/bin/magisk"
     log "Backed up existing /system/bin/magisk"
@@ -1085,7 +1086,7 @@ chmod 0644 /system/etc/init/magisk.rc
 chmod 0755 /data/adb/magisk_init.sh /system/bin/magisk
 chown root:root /system/etc/init/magisk.rc /data/adb/magisk_init.sh /system/bin/magisk /data/adb/magisk/* 2>/dev/null || true
 restorecon /system/etc/init/magisk.rc /data/adb/magisk_init.sh /system/bin/magisk /data/adb/magisk/* 2>/dev/null || true
-grep -q 'MUMU_MAGISK_COMPAT_LAUNCHER_v1.0.1' /system/bin/magisk || fail "compatibility launcher marker missing"
+grep -q 'MUMU_MAGISK_COMPAT_LAUNCHER_v1.0.2' /system/bin/magisk || fail "compatibility launcher marker missing"
 log "Installed Magisk compatibility launcher; KernelSU userspace is quarantined so NeoZygisk detects Magisk only"
 
 [ -x /debug_ramdisk/magisk ] && /debug_ramdisk/magisk --stop 2>/dev/null || true
@@ -1286,7 +1287,7 @@ fi
 
 echo "===== Magisk compatibility launcher ====="
 ls -lZ /system/bin/magisk 2>/dev/null || ls -l /system/bin/magisk 2>/dev/null || true
-grep 'MUMU_MAGISK_COMPAT_LAUNCHER_v1.0.1' /system/bin/magisk 2>/dev/null || true
+grep 'MUMU_MAGISK_COMPAT_LAUNCHER_v1.0.2' /system/bin/magisk 2>/dev/null || true
 /system/bin/magisk -v 2>/dev/null || true
 /system/bin/magisk -V 2>/dev/null || true
 

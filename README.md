@@ -1,6 +1,6 @@
 # MuMu Android 15：Magisk + LSPosed 一键安装工具
 
-> **版本：1.0.1**  
+> **版本：1.0.2**  
 > **作者：Main**
 >
 > 面向 MuMu Android 15 实例的一键 Magisk、NeoZygisk 与 Vector（LSPosed）安装工具。
@@ -23,6 +23,15 @@ MuMu Android 15
 - Android 15 以外的系统版本
 
 安装器会自动读取设备的 Android 版本。如果检测结果不是 Android 15，脚本会立即停止，不会继续修改系统文件。
+
+---
+
+## 1.0.2 更新说明
+
+- 修复从 PowerShell 7 终端运行 .cmd 时，Windows PowerShell 5.1 继承 PS7 模块路径导致 `Get-FileHash` 丢失、下载校验失败的问题。
+- 兼容启动器标记改为前缀识别：旧版安装的 `/system/bin/magisk` 能被新版安装器正确备份、被新版卸载器干净移除，不会再覆盖原始备份。
+- 修正 `packages/README.txt` 文案。
+- 重新生成 `SHA256SUMS.txt`，移除指向不存在文件的条目（可用 `sha256sum *.ps1 *.cmd *.md packages/README.txt > SHA256SUMS.txt` 更新）。
 
 ---
 
