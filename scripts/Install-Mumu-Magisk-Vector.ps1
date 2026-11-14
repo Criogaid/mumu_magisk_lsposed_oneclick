@@ -16,15 +16,27 @@ $ErrorActionPreference = "Stop"
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
 $ScriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
-$WorkRoot = Join-Path $ScriptRoot "work"
+$ToolRoot = Split-Path -Parent $ScriptRoot
+$PayloadRoot = Join-Path $ToolRoot "payload"
+$WorkRoot = Join-Path $ToolRoot "work"
 $DownloadRoot = Join-Path $WorkRoot "downloads"
 $ExtractRoot = Join-Path $WorkRoot "magisk_apk"
 $StageRoot = Join-Path $WorkRoot "stage"
-$LogRoot = Join-Path $ScriptRoot "logs"
-$BackupRoot = Join-Path $ScriptRoot "backups"
-$ConfigRoot = Join-Path $ScriptRoot "config"
+$LogRoot = Join-Path $ToolRoot "logs"
+$BackupRoot = Join-Path $ToolRoot "backups"
+$ConfigRoot = Join-Path $ToolRoot "config"
 $DeviceConfigPath = Join-Path $ConfigRoot "last-device.txt"
-$ToolVersion = "1.0.2"
+
+# 设备端 shell 脚本以独立文件存放在 payload\，可本地 sh -n 检查；
+# 仓库 .gitattributes 强制 LF，这里仍做 CR 清理以防编辑器改写。
+function Read-Payload {
+    param([Parameter(Mandatory = $true)][string]$Name)
+    $path = Join-Path $PayloadRoot $Name
+    if (-not (Test-Path -LiteralPath $path)) { Fail "缺少设备端脚本：payload\$Name" }
+    # payload 是无 BOM UTF-8；5.1 默认按 ANSI 读取会让 GBK 双字节吞掉换行，必须显式 UTF8
+    return ((Get-Content -Raw -Encoding UTF8 -LiteralPath $path) -replace "`r`n", "`n")
+}
+$ToolVersion = "1.0.3"
 $Device = ""
 $Stamp = Get-Date -Format "yyyyMMdd-HHmmss"
 $HostLog = Join-Path $LogRoot "install-$Stamp.log"
@@ -569,28 +581,7 @@ function Test-SystemWritable {
     Write-Step "检查 /system 是否可写（使用远端探测脚本，避免 Windows/adb/sh 多层引号误判）"
 
     $probePath = Join-Path $WorkRoot "mumu-system-rw-probe.sh"
-    $probeText = @'
-#!/system/bin/sh
-PROBE=/system/etc/init/.mumu_magisk_rw_test
-ERR=/data/local/tmp/mumu-system-rw-probe.err
-rm -f "$PROBE" "$ERR"
-
-if touch "$PROBE" 2>"$ERR"; then
-    chmod 0644 "$PROBE" 2>/dev/null || true
-    echo MUMU_SYSTEM_RW
-    ls -lZ "$PROBE" 2>/dev/null || ls -l "$PROBE" 2>/dev/null || true
-    rm -f "$PROBE" "$ERR"
-    exit 0
-fi
-
-echo MUMU_SYSTEM_RW_FAILED
-cat "$ERR" 2>/dev/null || true
-id 2>/dev/null || true
-id -Z 2>/dev/null || true
-grep ' /system ' /proc/mounts 2>/dev/null || true
-mount 2>/dev/null | grep -E ' on /system | /system ' || true
-exit 1
-'@
+    $probeText = Read-Payload "system-rw-probe.sh"
     Write-Utf8NoBom -Path $probePath -Content $probeText
     Invoke-Adb -Arguments @("push", $probePath, "/data/local/tmp/mumu-system-rw-probe.sh") -Quiet | Out-Null
     Invoke-Adb -Arguments @("shell", "chmod", "0755", "/data/local/tmp/mumu-system-rw-probe.sh") -Quiet | Out-Null
@@ -641,7 +632,7 @@ if ([string]::IsNullOrWhiteSpace($MagiskApk)) {
 if ([string]::IsNullOrWhiteSpace($NeoZygiskZip)) {
     # 不内置、也不重新打包 NeoZygisk。优先使用用户放入 packages 的官方 ZIP；
     # 未提供离线包时，直接从 JingMatrix/NeoZygisk 最新稳定版下载官方 release 资产。
-    $offlineNeoZygisk = Join-Path $ScriptRoot "packages\NeoZygisk.zip"
+    $offlineNeoZygisk = Join-Path $ToolRoot "packages\NeoZygisk.zip"
     if (Test-Path -LiteralPath $offlineNeoZygisk) {
         $NeoZygiskZip = (Resolve-Path -LiteralPath $offlineNeoZygisk).Path
         Write-Step "使用 packages\NeoZygisk.zip 离线包（安装器不会修改该 ZIP）"
@@ -866,300 +857,10 @@ if ($utilFunctionsText -notmatch '(?m)^MAGISK_VER_CODE=\d+') {
 }
 Write-Step "Magisk 完整运行时预检通过（核心二进制、安装脚本、版本元数据）"
 
-$rcText = @'
-on post-fs
-    mkdir /debug_ramdisk 0755 root root
-    mount tmpfs tmpfs /debug_ramdisk mode=0755
-
-on post-fs-data
-    exec u:r:su:s0 root root -- /system/bin/sh /data/adb/magisk_init.sh
-    exec u:r:su:s0 root root -- /debug_ramdisk/magisk --daemon
-    exec u:r:su:s0 root root -- /debug_ramdisk/magisk --post-fs-data
-
-on boot
-    exec u:r:su:s0 root root -- /debug_ramdisk/magisk --service
-
-on property:sys.boot_completed=1
-    exec u:r:su:s0 root root -- /debug_ramdisk/magisk --boot-complete
-'@
-
-$magiskCompatText = @'
-#!/system/bin/sh
-# MUMU_MAGISK_COMPAT_LAUNCHER_v1.0.2
-# Keep Magisk discoverable in Android's standard PATH so official NeoZygisk can use
-# Magisk as its sole userspace root implementation. KernelSU userspace is separately
-# quarantined by magisk_init.sh; this launcher also makes recent KernelSU skip modules.
-if [ -x /debug_ramdisk/magisk ]; then
-    exec /debug_ramdisk/magisk "$@"
-fi
-if [ -x /data/adb/magisk/magisk ]; then
-    exec /data/adb/magisk/magisk "$@"
-fi
-echo "Mumu Magisk runtime is not ready" >&2
-exit 127
-'@
-
-$initText = @'
-#!/system/bin/sh
-export MAGISKTMP=/debug_ramdisk
-export PATH=$MAGISKTMP/.magisk/busybox:/sbin:/system/bin:/system_ext/bin:/system/xbin:/vendor/bin:/odm/bin
-MAGISKBIN=/data/adb/magisk
-LOG=/data/local/tmp/magisk_init.log
-
-log() {
-    echo "[$(date '+%F %T')] $*" >> "$LOG"
-}
-
-# MuMu keeps the KernelSU kernel interface available even after its Root toggle is off.
-# Official NeoZygisk treats KernelSU + Magisk as conflicting root implementations when
-# /data/adb/ksud is still present. Preserve the original ksud once, then keep that path
-# absent before Magisk runs module post-fs-data scripts.
-PERSIST_BACKUP=/data/adb/mumu-magisk-backup
-quarantine_ksu_userspace() {
-    mkdir -p "$PERSIST_BACKUP" || return 1
-    if [ -e /data/adb/ksud ] || [ -L /data/adb/ksud ]; then
-        if [ ! -e "$PERSIST_BACKUP/ksud" ] && [ ! -L "$PERSIST_BACKUP/ksud" ]; then
-            if ! mv /data/adb/ksud "$PERSIST_BACKUP/ksud" 2>>"$LOG"; then
-                cp -af /data/adb/ksud "$PERSIST_BACKUP/ksud" 2>>"$LOG" || return 1
-                rm -rf /data/adb/ksud 2>>"$LOG" || return 1
-            fi
-            chmod 0700 "$PERSIST_BACKUP/ksud" 2>/dev/null || true
-            log "Backed up and quarantined KernelSU userspace daemon"
-        else
-            rm -rf /data/adb/ksud 2>>"$LOG" || return 1
-            log "Removed a restored KernelSU userspace daemon; original backup retained"
-        fi
-    fi
-    if [ -e /data/adb/ksud ] || [ -L /data/adb/ksud ]; then
-        return 1
-    fi
-    log "Root implementation boundary ready: Magisk only"
-    return 0
-}
-
-log "Starting Magisk initialization"
-quarantine_ksu_userspace || { log "ERROR: unable to quarantine /data/adb/ksud"; exit 1; }
-[ -x "$MAGISKBIN/magisk" ] || { log "Missing $MAGISKBIN/magisk"; exit 1; }
-
-mkdir -p "$MAGISKTMP/.magisk/device" "$MAGISKTMP/.magisk/worker"
-mkdir -p /data/adb/modules /data/adb/post-fs-data.d /data/adb/service.d
-chmod 0755 "$MAGISKTMP/.magisk"
-chmod 0711 "$MAGISKTMP/.magisk/device"
-
-for file in magisk magisk32 magiskpolicy busybox; do
-    [ -f "$MAGISKBIN/$file" ] || continue
-    cp -af "$MAGISKBIN/$file" "$MAGISKTMP/$file" || exit 1
-    chmod 0755 "$MAGISKTMP/$file"
-done
-if [ -f "$MAGISKBIN/stub.apk" ]; then
-    cp -af "$MAGISKBIN/stub.apk" "$MAGISKTMP/stub.apk"
-    chmod 0644 "$MAGISKTMP/stub.apk"
-fi
-
-ln -sf ./magisk "$MAGISKTMP/su"
-ln -sf ./magisk "$MAGISKTMP/resetprop"
-ln -sf ./magiskpolicy "$MAGISKTMP/supolicy"
-
-if ! grep -q " $MAGISKTMP/.magisk/worker " /proc/mounts; then
-    chmod 0000 "$MAGISKTMP/.magisk/worker"
-    "$MAGISKTMP/busybox" mount -t tmpfs -o mode=0755 magisk "$MAGISKTMP/.magisk/worker" || true
-fi
-"$MAGISKTMP/busybox" mount --make-private "$MAGISKTMP/.magisk/worker" 2>/dev/null || true
-chmod 0755 "$MAGISKTMP/.magisk/worker" 2>/dev/null || true
-
-mkdir -p "$MAGISKTMP/.magisk/busybox"
-"$MAGISKTMP/busybox" --install -s "$MAGISKTMP/.magisk/busybox"
-export PATH=$MAGISKTMP/.magisk/busybox:$PATH
-
-# 与 Magisk 官方 AVD live_setup 保持一致：config 表示运行时配置目录已就绪，
-# live 标记当前属于 live/manual setup，而不是 boot image patch 安装。
-touch "$MAGISKTMP/.magisk/config" "$MAGISKTMP/.magisk/live"
-chmod 0644 "$MAGISKTMP/.magisk/config" "$MAGISKTMP/.magisk/live" 2>/dev/null || true
-
-log "Preinit device: $(MAKEDEV=1 "$MAGISKTMP/magisk" --preinit-device 2>&1)"
-
-RULESCMD=""
-rule="$MAGISKTMP/.magisk/preinit/sepolicy.rule"
-[ -f "$rule" ] && RULESCMD="--apply $rule"
-if [ -d /sys/fs/selinux ]; then
-    if [ -f /vendor/etc/selinux/precompiled_sepolicy ]; then
-        "$MAGISKTMP/magiskpolicy" --load /vendor/etc/selinux/precompiled_sepolicy --live --magisk $RULESCMD >> "$LOG" 2>&1 || true
-    elif [ -f /sepolicy ]; then
-        "$MAGISKTMP/magiskpolicy" --load /sepolicy --live --magisk $RULESCMD >> "$LOG" 2>&1 || true
-    else
-        "$MAGISKTMP/magiskpolicy" --live --magisk $RULESCMD >> "$LOG" 2>&1 || true
-    fi
-fi
-
-# MUMU_MODULE_SEPOLICY_FIX_BEGIN
-# MuMu live setup does not replace Android init with magiskinit. Load enabled
-# module sepolicy.rule files before Magisk runs post-fs-data module scripts.
-# NeoZygisk needs these rules for its ptrace-based Zygote injection.
-for module_dir in /data/adb/modules/* /data/adb/modules_update/*; do
-    [ -d "$module_dir" ] || continue
-    [ -f "$module_dir/disable" ] && continue
-    [ -f "$module_dir/remove" ] && continue
-    [ -r "$module_dir/sepolicy.rule" ] || continue
-    log "Applying module sepolicy: $module_dir/sepolicy.rule"
-    if ! "$MAGISKTMP/magiskpolicy" --live --apply "$module_dir/sepolicy.rule" >> "$LOG" 2>&1; then
-        log "WARNING: failed to apply $module_dir/sepolicy.rule"
-    fi
-done
-# MUMU_MODULE_SEPOLICY_FIX_END
-
-log "Magisk initialization complete"
-exit 0
-'@
-
-$remoteInstallText = @'
-#!/system/bin/sh
-LOG=/data/local/tmp/mumu-magisk-oneclick.log
-: > "$LOG"
-
-log() {
-    echo "[Mumu Installer] $*"
-    echo "[$(date '+%F %T')] $*" >> "$LOG"
-}
-
-fail() {
-    log "ERROR: $*"
-    exit 1
-}
-
-log "Checking root"
-id | grep -q 'uid=0' || fail "adbd is not root"
-
-BACKUP=/data/local/tmp/mumu_magisk_backup
-PERSIST_BACKUP=/data/adb/mumu-magisk-backup
-rm -rf "$BACKUP"
-mkdir -p "$BACKUP" "$PERSIST_BACKUP"
-[ -f /system/etc/init/magisk.rc ] && cp -af /system/etc/init/magisk.rc "$BACKUP/magisk.rc.old"
-[ -f /data/adb/magisk_init.sh ] && cp -af /data/adb/magisk_init.sh "$BACKUP/magisk_init.sh.old"
-[ -f /data/adb/magisk.db ] && cp -af /data/adb/magisk.db "$BACKUP/magisk.db.old"
-# 前缀匹配识别任意版本安装的兼容启动器，避免新版重跑时把旧启动器覆盖进原始备份槽
-if [ -e /system/bin/magisk ] && ! grep -q 'MUMU_MAGISK_COMPAT_LAUNCHER_v' /system/bin/magisk 2>/dev/null; then
-    rm -rf "$PERSIST_BACKUP/system-bin-magisk"
-    cp -af /system/bin/magisk "$PERSIST_BACKUP/system-bin-magisk" || fail "backup existing /system/bin/magisk"
-    log "Backed up existing /system/bin/magisk"
-fi
-
-# Closing MuMu's Root switch does not remove the KernelSU kernel interface. NeoZygisk
-# also requires /data/adb/ksud for KernelSU detection, so make that path absent while
-# preserving the original executable for uninstall/rollback.
-if [ -e /data/adb/ksud ] || [ -L /data/adb/ksud ]; then
-    if [ ! -e "$PERSIST_BACKUP/ksud" ] && [ ! -L "$PERSIST_BACKUP/ksud" ]; then
-        mv /data/adb/ksud "$PERSIST_BACKUP/ksud" || fail "backup and quarantine /data/adb/ksud"
-        chmod 0700 "$PERSIST_BACKUP/ksud" 2>/dev/null || true
-        log "Backed up and quarantined KernelSU userspace daemon"
-    else
-        rm -rf /data/adb/ksud || fail "remove restored /data/adb/ksud"
-        log "Removed restored KernelSU userspace daemon; original backup retained"
-    fi
-fi
-[ ! -e /data/adb/ksud ] && [ ! -L /data/adb/ksud ] || fail "KernelSU userspace path still exists"
-
-mkdir -p /data/adb/magisk || fail "cannot create /data/adb/magisk"
-
-# 安装完整 Magisk 运行时，而不是只放 magisk/magiskpolicy/busybox。
-# magisk --install-module 会硬性检查 util_functions.sh；官方 live_setup 也会
-# 把 assets/*.sh、magiskboot、magiskinit 一并放入 MAGISKBIN。
-for file in magisk magisk32 magiskpolicy busybox magiskboot magiskinit util_functions.sh boot_patch.sh addon.d.sh app_functions.sh uninstaller.sh module_installer.sh stub.apk; do
-    [ -f "/data/local/tmp/mumu_magisk_stage/$file" ] || continue
-    cp -af "/data/local/tmp/mumu_magisk_stage/$file" "/data/adb/magisk/$file" || fail "copy $file"
-done
-
-for file in magisk magiskpolicy busybox magiskboot magiskinit util_functions.sh; do
-    [ -s "/data/adb/magisk/$file" ] || fail "incomplete Magisk runtime: missing $file"
-done
-chmod 0755 /data/adb/magisk/magisk /data/adb/magisk/magiskpolicy /data/adb/magisk/busybox /data/adb/magisk/magiskboot /data/adb/magisk/magiskinit /data/adb/magisk/*.sh
-[ -f /data/adb/magisk/magisk32 ] && chmod 0755 /data/adb/magisk/magisk32
-[ -f /data/adb/magisk/stub.apk ] && chmod 0644 /data/adb/magisk/stub.apk
-
-# 在产生持久化改动之前检查脚本与版本占位符，避免把半成品写入模块目录。
-/data/adb/magisk/busybox sh -n /data/adb/magisk/util_functions.sh || fail "util_functions.sh syntax"
-grep -q '^MAGISK_VER_CODE=' /data/adb/magisk/util_functions.sh || fail "util_functions.sh has no version metadata"
-
-cp -af /data/local/tmp/magisk.rc /system/etc/init/magisk.rc || fail "install magisk.rc"
-cp -af /data/local/tmp/magisk_init.sh /data/adb/magisk_init.sh || fail "install magisk_init.sh"
-cp -af /data/local/tmp/magisk-compat /system/bin/magisk || fail "install /system/bin/magisk compatibility launcher"
-chmod 0644 /system/etc/init/magisk.rc
-chmod 0755 /data/adb/magisk_init.sh /system/bin/magisk
-chown root:root /system/etc/init/magisk.rc /data/adb/magisk_init.sh /system/bin/magisk /data/adb/magisk/* 2>/dev/null || true
-restorecon /system/etc/init/magisk.rc /data/adb/magisk_init.sh /system/bin/magisk /data/adb/magisk/* 2>/dev/null || true
-grep -q 'MUMU_MAGISK_COMPAT_LAUNCHER_v1.0.2' /system/bin/magisk || fail "compatibility launcher marker missing"
-log "Installed Magisk compatibility launcher; KernelSU userspace is quarantined so NeoZygisk detects Magisk only"
-
-[ -x /debug_ramdisk/magisk ] && /debug_ramdisk/magisk --stop 2>/dev/null || true
-mkdir -p /debug_ramdisk
-if ! grep -q ' /debug_ramdisk ' /proc/mounts; then
-    mount -t tmpfs -o mode=0755 tmpfs /debug_ramdisk || fail "mount /debug_ramdisk"
-fi
-
-/system/bin/sh /data/adb/magisk_init.sh || fail "magisk_init.sh"
-/debug_ramdisk/magisk --daemon || fail "start magisk daemon"
-sleep 1
-/debug_ramdisk/magisk --post-fs-data || fail "post-fs-data"
-/debug_ramdisk/magisk --service || true
-[ "$(getprop sys.boot_completed)" = "1" ] && /debug_ramdisk/magisk --boot-complete || true
-/debug_ramdisk/magisk --restorecon 2>/dev/null || true
-
-log "Magisk version: $(/debug_ramdisk/magisk -v 2>&1)"
-/debug_ramdisk/su -c id || fail "MagiskSU verification"
-
-# NeoZygisk replaces built-in Zygisk in this unsupported emulator setup.
-# This installer is already running as uid 0, so call magisk directly. Avoid nested
-# su -c quoting: Android mksh would parse SQL parentheses as shell syntax.
-/debug_ramdisk/magisk --sqlite "INSERT OR REPLACE INTO settings SELECT 'zygisk',0;" || true
-
-install_module_zip() {
-    name="$1"
-    zipfile="$2"
-    [ -s "$zipfile" ] || fail "$name zip missing"
-
-    modid=$(/data/adb/magisk/busybox unzip -p "$zipfile" module.prop 2>/dev/null | sed -n 's/^id=//p' | head -n 1 | tr -d '\015')
-    [ -n "$modid" ] || fail "$name module.prop/id missing"
-    log "Installing $name (id=$modid)"
-
-    # 完整重装：清除上一次未完成的更新目录，避免旧文件与新模块混装。
-    rm -rf "/data/adb/modules_update/$modid"
-    rm -f "/data/adb/modules/$modid/disable" "/data/adb/modules/$modid/remove" 2>/dev/null || true
-
-    # 首选 Magisk 官方入口。若某个版本的 CLI 环境检查仍不兼容手工 live setup，
-    # 直接执行同一份官方 util_functions.sh 作为等价回退，并保留完整输出。
-    if ! /debug_ramdisk/magisk --install-module "$zipfile"; then
-        log "$name: Magisk CLI installer failed; trying official util_functions fallback"
-        OUTFD=1 ZIPFILE="$zipfile" ASH_STANDALONE=1 MAGISKTMP=/debug_ramdisk PATH=/debug_ramdisk:/data/adb/magisk:$PATH /data/adb/magisk/busybox sh -c '. /data/adb/magisk/util_functions.sh; install_module' || fail "$name install"
-    fi
-
-    if [ ! -s "/data/adb/modules_update/$modid/module.prop" ] && [ ! -s "/data/adb/modules/$modid/module.prop" ]; then
-        fail "$name installer returned success but module was not staged"
-    fi
-    log "$name staged successfully"
-}
-
-install_module_zip "NeoZygisk" /data/local/tmp/NeoZygisk.zip
-install_module_zip "Vector" /data/local/tmp/Vector.zip
-
-# NeoZygisk ZIP is installed as supplied. Duplicate execution is prevented at the
-# root-framework boundary by /system/bin/magisk, not by changing third-party files.
-NEODIR=""
-[ -d /data/adb/modules_update/zygisksu ] && NEODIR=/data/adb/modules_update/zygisksu
-[ -z "$NEODIR" ] && [ -d /data/adb/modules/zygisksu ] && NEODIR=/data/adb/modules/zygisksu
-[ -n "$NEODIR" ] || fail "NeoZygisk module directory missing after install"
-[ -s "$NEODIR/post-fs-data.sh" ] || fail "NeoZygisk post-fs-data.sh missing after install"
-[ -s "$NEODIR/service.sh" ] || fail "NeoZygisk service.sh missing after install"
-for d in /data/adb/modules/zygisksu /data/adb/modules_update/zygisksu /data/adb/modules/zygisk_vector /data/adb/modules_update/zygisk_vector; do
-    [ -d "$d" ] || continue
-    rm -f "$d/disable" "$d/remove"
-done
-rm -rf /data/adb/neozygisk-mumu-guard 2>/dev/null || true
-log "Official NeoZygisk module staged without modifying its scripts"
-log "Root conflict prevention: /data/adb/ksud quarantined; /system/bin/magisk remains the only detected userspace root"
-log "Duplicate module execution prevention is provided by the system Magisk compatibility launcher"
-
-log "Installation staged successfully. Reboot is required."
-exit 0
-'@
+$rcText = Read-Payload "magisk.rc"
+$magiskCompatText = Read-Payload "magisk-compat"
+$initText = Read-Payload "magisk-init.sh"
+$remoteInstallText = Read-Payload "install.sh"
 
 $rcPath = Join-Path $WorkRoot "magisk.rc"
 $initPath = Join-Path $WorkRoot "magisk_init.sh"
@@ -1260,50 +961,7 @@ $suCheck = Invoke-Adb -Arguments @("shell", "/debug_ramdisk/su", "-c", "id") -Al
 
 Write-Step "验证 NeoZygisk / Vector"
 $verifyModulesPath = Join-Path $WorkRoot "mumu-verify-modules.sh"
-$verifyModulesText = @'
-#!/system/bin/sh
-
-echo "===== module metadata ====="
-for f in /data/adb/modules/*/module.prop; do
-    [ -f "$f" ] || continue
-    echo "====$f"
-    cat "$f"
-done
-
-echo "===== unloaded markers ====="
-find /data/adb/modules -path '*/zygisk/unloaded' -print 2>/dev/null || true
-
-echo "===== root implementation boundary ====="
-if [ -e /data/adb/ksud ] || [ -L /data/adb/ksud ]; then
-    echo "ERROR: /data/adb/ksud still exists"
-    ls -lZ /data/adb/ksud 2>/dev/null || ls -l /data/adb/ksud 2>/dev/null || true
-else
-    echo "KernelSU userspace: quarantined"
-fi
-if [ -e /data/adb/mumu-magisk-backup/ksud ] || [ -L /data/adb/mumu-magisk-backup/ksud ]; then
-    echo "KernelSU backup: present"
-    ls -lZ /data/adb/mumu-magisk-backup/ksud 2>/dev/null || ls -l /data/adb/mumu-magisk-backup/ksud 2>/dev/null || true
-fi
-
-echo "===== Magisk compatibility launcher ====="
-ls -lZ /system/bin/magisk 2>/dev/null || ls -l /system/bin/magisk 2>/dev/null || true
-grep 'MUMU_MAGISK_COMPAT_LAUNCHER_v1.0.2' /system/bin/magisk 2>/dev/null || true
-/system/bin/magisk -v 2>/dev/null || true
-/system/bin/magisk -V 2>/dev/null || true
-
-echo "===== NeoZygisk runtime status ====="
-cat /data/adb/neozygisk/module.prop 2>/dev/null || true
-
-echo "===== init tracer and monitor count ====="
-grep '^TracerPid:' /proc/1/status 2>/dev/null || true
-ps -A -o NAME,ARGS 2>/dev/null | grep -c '[z]ygisk-ptrace.*monitor' 2>/dev/null || true
-
-echo "===== process topology ====="
-ps -A -o USER,PID,PPID,NAME,ARGS 2>/dev/null || ps -A -o USER,PID,PPID,NAME,CMD 2>/dev/null || ps -A
-
-echo "===== Vector LSPosed data ====="
-ls -la /data/adb/lspd 2>/dev/null || true
-'@
+$verifyModulesText = Read-Payload "verify-modules.sh"
 Write-Utf8NoBom -Path $verifyModulesPath -Content $verifyModulesText
 Invoke-Adb -Arguments @("push", $verifyModulesPath, "/data/local/tmp/mumu-verify-modules.sh") -Quiet | Out-Null
 Invoke-Adb -Arguments @("shell", "chmod", "0755", "/data/local/tmp/mumu-verify-modules.sh") -Quiet | Out-Null

@@ -1,0 +1,13 @@
+#!/system/bin/sh
+# MUMU_MAGISK_COMPAT_LAUNCHER_v1.0.3
+# Keep Magisk discoverable in Android's standard PATH so official NeoZygisk can use
+# Magisk as its sole userspace root implementation. KernelSU userspace is separately
+# quarantined by magisk_init.sh; this launcher also makes recent KernelSU skip modules.
+if [ -x /debug_ramdisk/magisk ]; then
+    exec /debug_ramdisk/magisk "$@"
+fi
+if [ -x /data/adb/magisk/magisk ]; then
+    exec /data/adb/magisk/magisk "$@"
+fi
+echo "Mumu Magisk runtime is not ready" >&2
+exit 127

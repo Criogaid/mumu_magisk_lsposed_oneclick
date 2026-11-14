@@ -1,6 +1,6 @@
 # MuMu Android 15：Magisk + LSPosed 一键安装工具
 
-> **版本：1.0.2**
+> **版本：1.0.3**
 > **上游：** [Bascter-Main/mumu_magisk_lsposed_oneclick](https://github.com/Bascter-Main/mumu_magisk_lsposed_oneclick)（原作者：Main）
 >
 > 面向 MuMu Android 15 实例的一键 Magisk、NeoZygisk 与 Vector（LSPosed）安装工具。双击 `install.cmd` 即可完成下载、校验、安装与验证。
@@ -211,7 +211,7 @@ daemon64: running
 ### 方式二：通过 PowerShell 参数指定
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\Install-Mumu-Magisk-Vector.ps1 `
+powershell -ExecutionPolicy Bypass -File .\scripts\Install-Mumu-Magisk-Vector.ps1 `
   -MagiskApk .\Magisk.apk `
   -NeoZygiskZip .\NeoZygisk.zip `
   -VectorZip .\Vector.zip
@@ -364,6 +364,27 @@ uninstall.cmd
 
 ---
 
+## 项目结构与测试
+
+```text
+├─ install.cmd / uninstall.cmd / diagnose-system-rw.cmd   入口（双击运行）
+├─ scripts\      PowerShell 主脚本
+├─ payload\      设备端 shell 脚本（安装/卸载/诊断共用，仓库强制 LF）
+├─ packages\     离线安装包放置处（可选）
+├─ test\         冒烟测试（假 adb，无需真机）
+└─ logs\ work\ backups\ config\   运行时目录（自动生成，已 gitignore）
+```
+
+修改后可在无真机环境下跑全流程回归：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File test\smoke.ps1
+```
+
+冒烟测试用假 adb 模拟一台已 root、/system 可写的设备，完整执行安装（-NoReboot）、卸载、诊断三条链路，并逐字节比对生成的设备端脚本与 `payload\` 源文件。
+
+---
+
 ## 文件校验
 
 下载工具包后可校验完整性：
@@ -390,6 +411,14 @@ sha256sum -c SHA256SUMS.txt
 ---
 
 ## 更新日志
+
+### 1.0.3
+
+- 目录重构：入口 `.cmd` 保留在根目录，主脚本移入 `scripts\`，设备端 shell 脚本提取为 `payload\` 独立文件（仓库强制 LF），可本地 `sh -n` 检查。
+- 修复 payload 为无 BOM UTF-8 时，Windows PowerShell 5.1 按 ANSI 读取导致换行丢失与乱码的问题（该问题会损坏设备端脚本）。
+- 新增 `test\smoke.ps1` 冒烟测试：假 adb 模拟已 root 设备，无需真机跑完安装/卸载/诊断全流程。
+- 诊断工具与安装器共用同一份 `/system` 探测脚本，口径一致。
+- 兼容启动器标记随版本升级为 `v1.0.3`（跨版本前缀识别不受影响）。
 
 ### 1.0.2
 

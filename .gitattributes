@@ -1,0 +1,2 @@
+# 设备端脚本必须在设备上是 LF，禁止 checkout 时转成 CRLF
+payload/** text eol=lf

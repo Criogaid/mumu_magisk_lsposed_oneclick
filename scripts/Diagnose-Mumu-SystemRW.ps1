@@ -3,7 +3,8 @@
 )
 $ErrorActionPreference = "Stop"
 $ScriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
-$DeviceConfigPath = Join-Path $ScriptRoot "config\last-device.txt"
+$ToolRoot = Split-Path -Parent $ScriptRoot
+$DeviceConfigPath = Join-Path $ToolRoot "config\last-device.txt"
 $cmd = Get-Command $AdbPath -ErrorAction SilentlyContinue
 if ($null -eq $cmd) { throw "找不到 adb。" }
 $adb = $cmd.Source
@@ -26,21 +27,10 @@ if ($Device -notmatch '^[0-9]{1,3}(?:\.[0-9]{1,3}){3}:[0-9]{1,5}$') { throw "设
 & $adb -s $Device root | Out-Host
 Start-Sleep -Seconds 3
 & $adb connect $Device | Out-Host
+# 与安装器共用 payload\system-rw-probe.sh，保证诊断与安装探测口径一致
 $local = Join-Path $env:TEMP "mumu-system-rw-probe.sh"
-@'
-#!/system/bin/sh
-P=/system/etc/init/.mumu_magisk_rw_test
-rm -f "$P"
-if touch "$P"; then
-  echo MUMU_SYSTEM_RW
-  ls -lZ "$P" 2>/dev/null || ls -l "$P"
-  rm -f "$P"
-  exit 0
-fi
-id
-id -Z 2>/dev/null
-exit 1
-'@ | Set-Content -LiteralPath $local -Encoding Ascii
+$enc = New-Object System.Text.UTF8Encoding($false)
+[IO.File]::WriteAllText($local, ((Get-Content -Raw -Encoding UTF8 -LiteralPath (Join-Path $ToolRoot "payload\system-rw-probe.sh")) -replace "`r`n", "`n"), $enc)
 & $adb -s $Device push $local /data/local/tmp/mumu-system-rw-probe.sh | Out-Host
 & $adb -s $Device shell chmod 0755 /data/local/tmp/mumu-system-rw-probe.sh | Out-Host
 Write-Host "[1] adbd root"
