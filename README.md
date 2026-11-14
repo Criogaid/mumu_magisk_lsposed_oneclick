@@ -1,11 +1,37 @@
 # MuMu Android 15：Magisk + LSPosed 一键安装工具
 
-> **版本：1.0.2**  
-> **作者：Main**
+> **版本：1.0.2**
+> **上游：** [Bascter-Main/mumu_magisk_lsposed_oneclick](https://github.com/Bascter-Main/mumu_magisk_lsposed_oneclick)（原作者：Main）
 >
-> 面向 MuMu Android 15 实例的一键 Magisk、NeoZygisk 与 Vector（LSPosed）安装工具。
+> 面向 MuMu Android 15 实例的一键 Magisk、NeoZygisk 与 Vector（LSPosed）安装工具。双击 `install.cmd` 即可完成下载、校验、安装与验证。
+
+## 目录
+
+- [工作原理](#工作原理)
+- [适用范围](#适用范围)
+- [安装前准备](#安装前准备)
+- [快速开始](#快速开始)
+- [安装过程会发生什么](#安装过程会发生什么)
+- [安装完成后的设置](#安装完成后的设置)
+- [最终正常状态](#最终正常状态)
+- [参数与离线安装](#参数与离线安装)
+- [在线下载与缓存](#在线下载与缓存)
+- [验证与诊断](#验证与诊断)
+- [日志位置](#日志位置)
+- [卸载方法](#卸载方法)
+- [故障排查](#故障排查)
+- [文件校验](#文件校验)
+- [风险说明](#风险说明)
+- [更新日志](#更新日志)
 
 ---
+
+## 工作原理
+
+- **不修改 boot 镜像。** 利用 MuMu 的"可写系统盘"，把官方 Magisk 完整运行时装入 `/data/adb/magisk`，并通过自定义 init 配置（`/system/etc/init/magisk.rc`）在开机时以用户态方式拉起 Magisk 守护进程。
+- **模块全部使用官方原包。** NeoZygisk 与 Vector（LSPosed）的 ZIP 原样交给 Magisk 官方模块安装入口，安装器不修改模块内容。
+- **处理 MuMu 自带 KernelSU 冲突。** 关闭 MuMu 的 Root 开关后内核接口仍在，NeoZygisk 会报 `Invalid root implementation: Multiple`。安装器把 `/data/adb/ksud` 备份并隔离（卸载时可恢复），使系统只检测到 Magisk。
+- **系统级兼容启动器。** 在 `/system/bin/magisk` 放置带 `MUMU_MAGISK_COMPAT_LAUNCHER_v` 标记的启动器，让 Magisk 在 Android 标准 PATH 中可被发现，并防止模块被两个根实现重复执行。
 
 ## 适用范围
 
@@ -24,161 +50,57 @@ MuMu Android 15
 
 安装器会自动读取设备的 Android 版本。如果检测结果不是 Android 15，脚本会立即停止，不会继续修改系统文件。
 
----
-
-## 1.0.2 更新说明
-
-- 修复从 PowerShell 7 终端运行 .cmd 时，Windows PowerShell 5.1 继承 PS7 模块路径导致 `Get-FileHash` 丢失、下载校验失败的问题。
-- 兼容启动器标记改为前缀识别：旧版安装的 `/system/bin/magisk` 能被新版安装器正确备份、被新版卸载器干净移除，不会再覆盖原始备份。
-- 修正 `packages/README.txt` 文案。
-- 重新生成 `SHA256SUMS.txt`，移除指向不存在文件的条目（可用 `sha256sum *.ps1 *.cmd *.md packages/README.txt > SHA256SUMS.txt` 更新）。
-
----
-
-## 1.0.1 更新说明
-
-- NeoZygisk 不再内置于工具包中，安装时下载官方最新稳定版。
-- 下载的 NeoZygisk ZIP 会原样交给 Magisk 安装，不修改模块脚本或二进制。
-- 支持复用已经校验的下载缓存。
-- 支持通过 `packages\NeoZygisk.zip` 或 PowerShell 参数进行离线安装。
-- 增加系统级 Magisk 兼容启动器，避免 MuMu 内置 Root 框架重复执行模块。
-- 增加 KernelSU userspace 冲突处理，避免 NeoZygisk 报告：
-
-  ```text
-  Invalid root implementation: Multiple
-  ```
-
-- 保留模块 `sepolicy.rule` 动态加载逻辑。
-- 增加 NeoZygisk monitor 数量、`TracerPid`、进程状态和模块运行状态检查。
-- 修复 Windows PowerShell 5.1 中文编码及多层命令引号问题。
-
----
-
-## 安装内容
-
-安装器会完整安装或更新：
-
-- Magisk 完整运行时
-- Magisk 管理器
-- NeoZygisk 官方最新稳定版
-- Vector / LSPosed 官方最新稳定版
-- MuMu 手工 Magisk 启动项
-- 模块 SELinux 规则加载逻辑
-- 系统级 Magisk 兼容启动器
-
-默认情况下，Magisk、NeoZygisk 和 Vector 均从 GitHub 官方发布页获取最新稳定版本。
+运行环境：Windows 10/11，PowerShell 5.1（`.cmd` 启动器已做环境隔离），需要 `adb`（platform-tools）与网络连接。
 
 ---
 
 ## 安装前准备
 
-请启动需要安装的 MuMu Android 15 实例，并逐项完成以下设置。
+请启动需要安装的 MuMu Android 15 实例，并逐项完成：
 
-### 1. 确认系统版本
-
-当前实例必须为：
-
-```text
-Android 15
-```
-
-### 2. 创建实例快照
-
-安装前必须为当前实例创建快照，以便设备无法启动时快速恢复。
-
-### 3. 开启 Root 权限
-
-进入：
-
-```text
-设备设置 → 开发者选项 → Root 权限
-```
-
-开启 Root 权限。
-
-### 4. 开启系统盘读写
-
-进入：
-
-```text
-设备设置 → 开发者选项 → 磁盘共享 → 可写系统盘
-```
-
-开启可写系统盘。
-
-### 5. 开启网络桥接模式
-
-进入：
-
-```text
-设备设置 → 网络 → 网络桥接模式
-```
-
-开启网络桥接模式。
-
-### 6. 开启 ADB
-
-确保：
-
-- MuMu 已开启 ADB；
-- 电脑与 MuMu 位于同一局域网；
-- 电脑可以通过局域网连接 MuMu 的 ADB 服务。
+1. **确认系统版本**为 Android 15。
+2. **创建实例快照**，以便设备无法启动时快速恢复。
+3. **开启 Root 权限**：设备设置 → 开发者选项 → Root 权限。
+4. **开启系统盘读写**：设备设置 → 开发者选项 → 磁盘共享 → 可写系统盘。
+5. **开启网络桥接模式**：设备设置 → 网络 → 网络桥接模式。
+6. **开启 ADB**，确保电脑可以连接 MuMu 的 ADB 服务。
 
 > [!IMPORTANT]
-> 如果刚刚修改了 Root 权限、可写系统盘或网络桥接模式，请先在 MuMu 窗口中点击一次“重启设备”，等待 Android 完整启动后再运行安装器。
+> 如果刚刚修改了 Root 权限、可写系统盘或网络桥接模式，请先在 MuMu 窗口中点击一次"重启设备"，等待 Android 完整启动后再运行安装器。
 >
 > 不要只关闭模拟器窗口，也不要只重新连接 ADB。
 
 ---
 
-## 运行方法
+## 快速开始
 
-完整解压工具包后，双击：
+1. 完整解压工具包（不要在压缩软件中直接运行）。
+2. 双击：
 
-```text
-install.cmd
-```
+   ```text
+   install.cmd
+   ```
 
-不要直接在压缩软件中运行。
+3. 按提示确认安装前 6 项准备已完成，输入 `YES`。
+4. 选择 MuMu 设备地址，支持：
 
-脚本会先执行：
+   | 输入方式 | 示例 |
+   |---|---|
+   | 列表编号 | `1` |
+   | IP 地址（默认端口 5555） | `192.168.1.42` |
+   | IP 和端口 | `192.168.1.42:5555` |
+   | 本机默认实例 | `127.0.0.1:16384` |
 
-```bash
-adb devices
-```
+   桥接模式下可在 Mumu 中查看局域网 IP；本机直连时 MuMu 12 默认实例的 ADB 端口为 `16384`（多实例端口不同）。
 
-随后列出当前 ADB 中记录的局域网设备，并要求选择 MuMu 设备地址。
+   最后一次选择的地址保存在 `config\last-device.txt`，下次运行直接回车即可复用。设备地址不通过 `install.cmd` 命令行参数传入。
 
-支持以下输入：
-
-| 输入方式 | 示例 |
-|---|---|
-| 列表编号 | `1` |
-| IP 地址 | `192.168.1.42` |
-| IP 和端口 | `192.168.1.42:5555` |
-
-只输入 IP 时，默认使用：
-
-```text
-5555
-```
-
-最后一次选择的设备地址会保存到：
-
-```text
-config\last-device.txt
-```
-
-下次运行时：
-
-- 直接按回车：使用上次地址；
-- 修改输入内容：选择新的设备地址。
-
-设备地址不通过 `install.cmd` 命令行参数传入。
+5. 安装器自动下载并校验 Magisk、NeoZygisk、Vector（需联网），完成写入后会提示重启。
+6. 在 MuMu 中点击"重启设备"，回到命令窗口输入 `RESTART`，安装器等待设备完成启动并做最终验证。
 
 ---
 
-## 安装过程
+## 安装过程会发生什么
 
 安装器会自动检查：
 
@@ -192,22 +114,18 @@ config\last-device.txt
 - 设备端 Shell 脚本是否通过语法检查；
 - Magisk 与 MuMu 内置 Root 框架是否存在执行冲突。
 
-完成安装文件写入后，脚本会要求在 MuMu 中点击：
+所有持久化写入开始之前，`/system` 写入探测和脚本语法检查必须通过，失败时不会留下半成品。
 
-```text
-重启设备
-```
-
-点击重启后，返回命令窗口并输入：
+完成安装文件写入后，脚本会要求在 MuMu 中点击"重启设备"，然后输入：
 
 ```text
 RESTART
 ```
 
-脚本会通过以下状态确认设备已经完成真正的重启：
+脚本通过以下状态确认设备已经完成真正的重启：
 
-- `boot_id`
-- `sys.boot_completed`
+- `boot_id` 变化
+- `sys.boot_completed` 为 1
 
 > [!WARNING]
 > 关闭 MuMu 窗口、重新连接 ADB 或重新启动安装脚本，都不会被视为完整设备重启。
@@ -220,7 +138,7 @@ RESTART
 
 ### 请在 Magisk 中完成
 
-1. 打开“模块”页面，开启 **NeoZygisk**。
+1. 打开"模块"页面，开启 **NeoZygisk**。
 2. 开启 **Vector**。
 3. 本方案使用 NeoZygisk，请勿同时开启 Magisk 设置页面中的内置 Zygisk。
 4. 保持 `Enforce DenyList` 关闭。
@@ -229,13 +147,8 @@ RESTART
 
 1. 返回当前设备窗口。
 2. 确认 NeoZygisk 和 Vector 均处于启用状态。
-3. 关闭 MuMu 自带 Root 权限：
-
-   ```text
-   设备设置 → 开发者选项 → Root 权限
-   ```
-
-4. 在 MuMu 窗口中点击“重启设备”，不要从 Magisk 中重启。
+3. 关闭 MuMu 自带 Root 权限：设备设置 → 开发者选项 → Root 权限。
+4. 在 MuMu 窗口中点击"重启设备"，不要从 Magisk 中重启。
 5. 重启完成后打开 NeoZygisk 检查状态。
 
 > [!CAUTION]
@@ -267,47 +180,33 @@ daemon64: running
 
 ---
 
-## 在线下载与缓存
+## 参数与离线安装
 
-默认情况下，安装器会查询并下载：
+### 安装参数
 
-- Magisk 最新稳定版
-- NeoZygisk 最新稳定版
-- Vector 最新稳定版
+| 参数 | 用途 |
+|---|---|
+| `-MagiskApk <路径>` | 使用本地 Magisk APK，跳过在线下载 |
+| `-NeoZygiskZip <路径>` | 使用本地 NeoZygisk 模块 ZIP |
+| `-VectorZip <路径>` | 使用本地 Vector 模块 ZIP |
+| `-AdbPath <路径>` | 指定 adb.exe 位置，默认从 PATH 查找 `adb` |
+| `-NoReboot` | 安装完成后不提示重启（模块需手动重启后才加载） |
+| `-AutoReboot` | 尝试通过 ADB 自动重启设备，失败时回退为人工重启 |
+| `-BootTimeoutSeconds <秒>` | 等待设备重启完成的超时，默认 480 |
+| `-ReplaceManager` | 管理器 APK 签名不兼容时，先卸载旧管理器再安装 |
+| `-Force` | 跳过安装前的 YES 确认 |
 
-下载文件保存在：
+### 卸载参数
 
-```text
-work\downloads
-```
-
-安装失败后重新运行时，可以复用已经完成校验的缓存。
-
-如果 GitHub API 返回资产 SHA-256 digest，安装器会进行完整哈希校验；否则会至少检查下载文件大小和模块结构。
-
-实际使用的模块 ZIP SHA-256 会写入主机端安装日志。
-
----
-
-## 离线安装
-
-本工具包不内置 NeoZygisk。
+| 参数 | 用途 |
+|---|---|
+| `-UninstallManager` | 同时卸载 Magisk 管理器 APK |
+| `-Force` | 跳过卸载前的 YES 确认 |
+| `-AdbPath <路径>` | 指定 adb.exe 位置 |
 
 ### 方式一：使用 packages 目录
 
-将官方 NeoZygisk ZIP 命名为：
-
-```text
-NeoZygisk.zip
-```
-
-放入：
-
-```text
-packages
-```
-
-安装器会优先使用该文件。
+本工具包不内置 NeoZygisk。将官方 NeoZygisk ZIP 命名为 `NeoZygisk.zip` 放入 `packages` 目录，安装器会优先使用该文件。
 
 ### 方式二：通过 PowerShell 参数指定
 
@@ -318,104 +217,90 @@ powershell -ExecutionPolicy Bypass -File .\Install-Mumu-Magisk-Vector.ps1 `
   -VectorZip .\Vector.zip
 ```
 
-参数说明：
+本地模块 ZIP 必须是标准模块包，根目录应包含 `module.prop` 与 `customize.sh`；模块 ID 应为：
 
-| 参数 | 用途 |
-|---|---|
-| `-MagiskApk` | 指定本地 Magisk APK |
-| `-NeoZygiskZip` | 指定本地 NeoZygisk 模块 ZIP |
-| `-VectorZip` | 指定本地 Vector 模块 ZIP |
+- NeoZygisk：`zygisksu`
+- Vector：`zygisk_vector`
 
-本地 NeoZygisk ZIP 必须是标准模块包，根目录应包含：
+安装器只会校验和安装这些 ZIP，不会修改其内容。
 
-```text
-module.prop
-customize.sh
-```
+### 覆盖安装
 
-模块 ID 应为：
-
-```text
-zygisksu
-```
-
-安装器只会校验和安装该 ZIP，不会修改其内容。
+已安装旧版本时，直接运行本版 `install.cmd` 即可。安装器会完整更新 Magisk、NeoZygisk、Vector 和启动环境；旧版中曾经内置或修改过的 NeoZygisk，会被在线下载的官方模块完整替换。
 
 ---
 
-## 覆盖安装
+## 在线下载与缓存
 
-已经安装旧版本时，可以直接运行本版：
+默认情况下，安装器会查询并下载：
 
-```text
-install.cmd
-```
+- Magisk 最新稳定版
+- NeoZygisk 最新稳定版
+- Vector 最新稳定版
 
-安装器会完整更新 Magisk、NeoZygisk、Vector 和启动环境。
+下载文件保存在 `work\downloads`。安装失败后重新运行时，可以复用已经完成校验的缓存。
 
-旧版中曾经内置或修改过的 NeoZygisk，会被在线下载的官方模块完整替换。
+如果 GitHub API 返回资产 SHA-256 digest，安装器会进行完整哈希校验；否则会至少检查下载文件大小和模块结构。实际使用的模块 ZIP SHA-256 会写入主机端安装日志。
 
 ---
 
-## 常用验证命令
+## 验证与诊断
 
-首先查看保存的设备地址：
+### 系统写入诊断工具
+
+双击：
+
+```text
+diagnose-system-rw.cmd
+```
+
+它会通过 `adbd root`、`su -c`、`su 0` 三条通道逐一测试 `/system` 写入并输出详细诊断。安装器报"/system 写入探测失败"时，先运行它定位是哪个通道的问题。
+
+### 常用验证命令
+
+先查看保存的设备地址（假设为 `192.168.1.42:5555`）：
 
 ```text
 config\last-device.txt
 ```
 
-假设设备地址为：
-
-```text
-192.168.1.42:5555
-```
-
-### 检查 Magisk 版本
+检查 Magisk 版本：
 
 ```bash
 adb -s 192.168.1.42:5555 shell "/debug_ramdisk/magisk -v"
 ```
 
-### 检查 Magisk Root
+检查 Magisk Root（正常输出应包含 `uid=0(root)`）：
 
 ```bash
 adb -s 192.168.1.42:5555 shell "/debug_ramdisk/su -c id"
 ```
 
-正常输出应包含：
-
-```text
-uid=0(root)
-```
-
-### 检查模块状态
+检查模块状态（没有输出通常表示不存在处于 `unloaded` 状态的模块）：
 
 ```bash
 adb -s 192.168.1.42:5555 shell "/debug_ramdisk/su -c 'find /data/adb/modules -name unloaded -print'"
 ```
 
-没有输出通常表示不存在处于 `unloaded` 状态的模块。
-
-### 检查 NeoZygisk monitor
+检查 NeoZygisk monitor（正常情况下只应存在一个）：
 
 ```bash
 adb -s 192.168.1.42:5555 shell "ps -A | grep zygisk-ptrace"
 ```
 
-正常情况下只应存在一个 monitor。
-
-### 检查 init 的 TracerPid
+检查 init 的 TracerPid：
 
 ```bash
 adb -s 192.168.1.42:5555 shell "grep TracerPid /proc/1/status"
 ```
 
-### 检查 LSPosed 数据目录
+检查 LSPosed 数据目录：
 
 ```bash
 adb -s 192.168.1.42:5555 shell "/debug_ramdisk/su -c 'ls -la /data/adb/lspd 2>/dev/null'"
 ```
+
+以上命令在 CMD 与 PowerShell 中均可直接使用。
 
 ---
 
@@ -427,19 +312,12 @@ adb -s 192.168.1.42:5555 shell "/debug_ramdisk/su -c 'ls -la /data/adb/lspd 2>/d
 logs\install-日期时间.log
 ```
 
-例如：
-
-```text
-logs\install-20260801-231500.log
-```
+例如 `logs\install-20260801-231500.log`。
 
 ### 设备端日志
 
 ```text
 /data/local/tmp/mumu-magisk-oneclick.log
-```
-
-```text
 /data/local/tmp/magisk_init.log
 ```
 
@@ -457,20 +335,41 @@ uninstall.cmd
 
 卸载器会：
 
-1. 读取上次保存的 MuMu 设备地址；
-2. 允许在卸载前修改设备地址；
-3. 移除 Magisk 启动项；
-4. 移除 NeoZygisk 和 Vector；
-5. 移除 Magisk 运行时；
-6. 移除本工具安装的系统级 Magisk 兼容启动器；
-7. 恢复安装前备份的同名系统文件和 Root userspace 文件。
+1. 读取上次保存的 MuMu 设备地址（可在卸载前修改）；
+2. 移除 Magisk 启动项；
+3. 移除 NeoZygisk 和 Vector；
+4. 移除 Magisk 运行时；
+5. 移除本工具安装的系统级 Magisk 兼容启动器；
+6. 恢复安装前备份的同名系统文件和 Root userspace 文件。
 
-是否卸载 Magisk 管理器 APK，可以通过卸载脚本参数选择。
+是否同时卸载 Magisk 管理器 APK，通过 `-UninstallManager` 参数选择。
 
-卸载完成后，请在 MuMu 窗口中手动点击：
+卸载完成后，请在 MuMu 窗口中手动点击"重启设备"。
 
-```text
-重启设备
+---
+
+## 故障排查
+
+| 现象 | 处理 |
+|---|---|
+| `找不到 adb` | 把 platform-tools 加入 PATH，或用 `-AdbPath` 指定 adb.exe |
+| `无法连接 <IP>` | 确认 MuMu 已开启 ADB 和网络桥接模式、IP 正确、防火墙放行 ADB；本机实例可改用 `127.0.0.1:16384` |
+| `adbd 没有获得 root` | 确认 Root 权限已开启，然后在 MuMu 中点击"重启设备"后重跑 |
+| `/system 写入探测...均失败` | 确认已开"可写系统盘"，且修改后重启过设备；运行 `diagnose-system-rw.cmd` 定位通道 |
+| `APK 内的 Magisk 二进制都无法...执行` | 用 `-MagiskApk` 指定与当前实例 ABI 匹配的 Magisk APK |
+| 管理器安装报 `INSTALL_FAILED_UPDATE_INCOMPATIBLE` | 重跑并加 `-ReplaceManager`（会卸载旧管理器），或手动卸载旧管理器后安装 |
+| `没有检测到完整的设备重启` | 必须在 MuMu 窗口点击"重启设备"；关窗口、重连 ADB、重跑脚本都不算。卡启动时用快照恢复 |
+| 直接运行 `.ps1` 时 `Get-FileHash 无法识别` | 从 PowerShell 7 终端启动 5.1 会继承被污染的模块路径；请用 `install.cmd` 启动（1.0.2 已在启动器内隔离） |
+| NeoZygisk 显示 `Invalid root implementation: Multiple` | 完成"安装完成后的设置"中的 MuMu 侧步骤：关闭 MuMu Root 权限并第二次重启 |
+
+---
+
+## 文件校验
+
+下载工具包后可校验完整性：
+
+```bash
+sha256sum -c SHA256SUMS.txt
 ```
 
 ---
@@ -488,8 +387,26 @@ uninstall.cmd
 > - 系统文件与 MuMu 原始状态不一致；
 > - 需要通过快照恢复实例。
 
-首次安装前必须创建并保留可用快照。
+---
 
-默认下载的是安装时 GitHub 标记的最新稳定版本，上游模块更新可能改变兼容性。需要固定版本时，请使用本地文件参数指定已经自行校验的安装包。
+## 更新日志
 
-使用本工具即表示使用者已经了解相关风险，并自行承担因系统修改产生的后果。
+### 1.0.2
+
+- 修复从 PowerShell 7 终端运行 `.cmd` 时，Windows PowerShell 5.1 继承 PS7 模块路径导致 `Get-FileHash` 丢失、下载校验失败的问题。
+- 兼容启动器标记改为前缀识别：旧版安装的 `/system/bin/magisk` 能被新版安装器正确备份、被新版卸载器干净移除，不会再覆盖原始备份。
+- 修正 `packages/README.txt` 文案。
+- 重新生成 `SHA256SUMS.txt`，移除指向不存在文件的条目。
+- 重构 README：补充诊断工具、完整参数表、故障排查与文件校验说明。
+
+### 1.0.1
+
+- NeoZygisk 不再内置于工具包中，安装时下载官方最新稳定版。
+- 下载的 NeoZygisk ZIP 会原样交给 Magisk 安装，不修改模块脚本或二进制。
+- 支持复用已经校验的下载缓存。
+- 支持通过 `packages\NeoZygisk.zip` 或 PowerShell 参数进行离线安装。
+- 增加系统级 Magisk 兼容启动器，避免 MuMu 内置 Root 框架重复执行模块。
+- 增加 KernelSU userspace 冲突处理，避免 NeoZygisk 报告 `Invalid root implementation: Multiple`。
+- 保留模块 `sepolicy.rule` 动态加载逻辑。
+- 增加 NeoZygisk monitor 数量、`TracerPid`、进程状态和模块运行状态检查。
+- 修复 Windows PowerShell 5.1 中文编码及多层命令引号问题。
